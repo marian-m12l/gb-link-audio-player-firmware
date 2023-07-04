@@ -6,7 +6,7 @@ project(gbusb)
  
 pico_sdk_init()
 
-add_compile_definitions(SECONDARY_MODE)
+#add_compile_definitions(SECONDARY_MODE)
 
 add_executable(gbusb)
 
@@ -17,6 +17,7 @@ target_include_directories(gbusb PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 
 target_sources(gbusb PRIVATE
         main.c
+        data.c
 
         usb_descriptors.c
 

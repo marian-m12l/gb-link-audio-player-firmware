@@ -112,6 +112,12 @@ void secondary_task(void);
 
 const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 
+extern unsigned char gbaudioplayerRawData[] __attribute__((section(".flashdata")));
+extern const unsigned int gbaudioplayerRawDataSize __attribute__((section(".flashdata")));
+uint32_t dataPos = 0;
+bool startSendingAudioData = false;
+uint32_t last_time_ms = 5000;
+
 int main(void)
 {
   #ifdef SECONDARY_MODE
@@ -119,7 +125,28 @@ int main(void)
     secondary_program_init(secondary.pio, secondary.sm, secondary_prog_offs, PIN_SCK, PIN_SIN, PIN_SOUT);
   #else
     uint cpha1_prog_offs = pio_add_program(spi.pio, &spi_cpha1_program);
-    pio_spi_init(spi.pio, spi.sm, cpha1_prog_offs, 8, 4058.838, 1, 1, PIN_SCK, PIN_SOUT, PIN_SIN);
+    // FIXME wrong divisors: calculated for 133MHz when default sysfreq is 125MHz
+    // 8192Hz --> 4058.838 @ 133MHz 3814.69726563 @125MHz
+    // 131072Hz --> 253.677375 @ 133MHz 238.418579102 @125MHz
+    // 65536Hz --> 507.354736328 @ 133MHz 476.837158203 @125MHz
+
+    // FIXME Account for time lost between bytes ??? --> need to be precisely 16384 bytes per second!!!
+
+    // TODO Use much higher transfer frequency to minimize byte transfer time, control throughput (8KBps / 16KBps) by pausing between bytes to allow processing time for GB ISR ???
+    // GB supports up to 500KHz ???
+
+    // 262144Hz --> 126.838684082 @ 133MHz 119.209289551 @125MHz
+    // 524288Hz --> 63.419342041 @ 133MHz 59.6046447754 @125MHz
+
+    // Throughput 8KBps:
+      // 131KHz --> ~60us data + ~60us delay
+      // 262KHz --> ~30us data + ~90us delay
+      // 524KHz --> ~15us data + ~105us delay
+    // Throughput 4KBps:
+      // 131KHz --> ~60us data + ~180us delay
+      // 262KHz --> ~30us data + ~210us delay
+      // 524KHz --> ~15us data + ~225us delay
+    pio_spi_init(spi.pio, spi.sm, cpha1_prog_offs, 8, 59.6046447754, 1, 1, PIN_SCK, PIN_SOUT, PIN_SIN);
   #endif
 
 
@@ -138,6 +165,28 @@ int main(void)
     #ifdef SECONDARY_MODE
       secondary_task();                                                                                                                           
     #endif
+
+    // TODO Send audio data over link cable @ 131072Hz bitrate ???
+    // TODO AFTER A FEW SECONDS !!!
+
+    // TODO send bursts of 4K samples? (to check received counter!!!)
+    if (startSendingAudioData || (to_ms_since_boot(get_absolute_time()) > (last_time_ms + 2000))) {
+      startSendingAudioData = true;
+      /*if ((dataPos % 0x1000) == 0) {  // Pause every 4KB
+        startSendingAudioData = false;
+        last_time_ms = to_ms_since_boot(get_absolute_time());
+        dataPos = (dataPos + 1) % gbaudioplayerRawDataSize; // FIXME increment once (which skips 1 byte) to avoid infinitely pausing
+      } else {*/
+        char data = gbaudioplayerRawData[dataPos];
+        pio_spi_write8_blocking(&spi, &data, 1);
+        //sleep_us(60);   // FIXME sleep between each byte to let the ISR happen --> 60 us delay on top of 120us transfer @ 8192Hz --> need to increase transfer speeds to achieve 8KBps ?!
+        //sleep_us(90);
+        //sleep_us(105);
+        sleep_us(225);
+        //echo_all(&data, 1); // DEBUG
+        dataPos = (dataPos + 1) % gbaudioplayerRawDataSize;
+      /*}*/
+    }
   }
 
   return 0;
